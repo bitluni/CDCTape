@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>WebSerial Spectrogram</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      background: #111;
+      color: white;
+      text-align: center;
+      padding: 20px;
+    }
+    canvas {
+      background: black;
+      border: 1px solid #555;
+      margin-top: 10px;
+    }
+    button {
+      margin: 5px;
+      padding: 10px 20px;
+      font-size: 16px;
+    }
+    .slider-container {
+      margin-top: 20px;
+    }
+    input[type="range"] {
+      width: 300px;
+    }
+    #topFreqs {
+      margin-top: 15px;
+      font-family: monospace;
+      white-space: pre;
+      background: #222;
+      padding: 10px;
+      border: 1px solid #444;
+      display: inline-block;
+      min-width: 300px;
+    }
+  </style>
+</head>
+<body>
+  <h1>WebSerial Spectrogram</h1>
+  <button id="connectBtn" onclick="connectSerial()">Connect</button>
+  <div>
+    <button onclick="sendByte(1)">Stop</button>
+    <button onclick="sendByte(2)">Play</button>
+    <button onclick="sendByte(3)">Rew</button>
+    <button onclick="sendByte(4)">FF</button>
+    <button onclick="sendByte(5)">Record</button>
+    <button onclick="sendByte(6)">Rec Test</button>
+    <button onclick="sendByte(7)">Read ADC</button>
+  </div>
+
+  <div class="slider-container">
+    <label for="freqSlider">Target Frequency: <span id="freqValue">0</span> Hz</label><br>
+    <input type="range" id="freqSlider" min="0" max="8000" value="0" step="100" />
+  </div>
+
+  <canvas id="spectrogram" width="800" height="256"></canvas>
+  <br>
+  <div id="topFreqs">Most Significant Frequencies...</div>
+
+  <script>
+    const canvas = document.getElementById('spectrogram');
+    const ctx = canvas.getContext('2d');
+
+    const SAMPLE_RATE = 10000;
+    const FFT_SIZE = 512;
+    const SAMPLES_PER_FRAME = 100;//FFT_SIZE;
+    const BUFFER_SIZE = 10000;
+    const FREQ_MIN = 100;
+    const FREQ_MAX = 3000;
+
+    let port, reader, writer;
+    let sampleBuffer = new Float32Array(BUFFER_SIZE).fill(0);
+    let sampleIndex = 0;
+    let fftInput = new Float32Array(FFT_SIZE);
+
+    async function connectSerial() {
+      try {
+        port = await navigator.serial.requestPort();
+        await port.open({ baudRate: 1000000 });
+        reader = port.readable.getReader();
+        writer = port.writable.getWriter();
+        document.getElementById('connectBtn').innerText = 'Connected';
+        readLoop();
+      } catch (e) {
+        alert('Serial error: ' + e);
+      }
+    }
+
+    function sendByte(byte) {
+      if (!writer) return;
+      writer.write(new Uint8Array([byte]));
+    }
+
+    async function readLoop() {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        if (value) {
+          for (let i = 0; i < value.length; i++) {
+            sampleBuffer[sampleIndex] = value[i] - 128; // center around 0
+            sampleIndex = (sampleIndex + 1) % BUFFER_SIZE;
+          }
+        }
+      }
+    }
+
+    function drawSpectrogram() {
+      const imageData = ctx.getImageData(1, 0, canvas.width - 1, canvas.height);
+      ctx.putImageData(imageData, 0, 0);
+
+      for (let i = 0; i < FFT_SIZE; i++) {
+        const idx = (sampleIndex - FFT_SIZE + i + BUFFER_SIZE) % BUFFER_SIZE;
+        fftInput[i] = sampleBuffer[idx];
+      }
+
+      const spectrum = fft(fftInput);
+      const binFreq = SAMPLE_RATE / FFT_SIZE;
+      const minBin = Math.floor(FREQ_MIN / binFreq);
+      const maxBin = Math.ceil(FREQ_MAX / binFreq);
+      const binCount = maxBin - minBin;
+
+      for (let y = 0; y < canvas.height; y++) {
+        const bin = minBin + Math.floor((binCount * (canvas.height - y - 1)) / canvas.height);
+        const mag = Math.log(1 + spectrum[bin]) * 20;
+        const color = heatColor(mag / 200); // 🔥 reduced intensity
+        ctx.fillStyle = color;
+        ctx.fillRect(canvas.width - 1, y, 1, 1);
+      }
+
+      updateTopFrequencies(spectrum, binFreq);
+
+      requestAnimationFrame(drawSpectrogram);
+    }
+
+    function fft(signal) {
+      const N = signal.length;
+      const re = signal.slice();
+      const im = new Float32Array(N);
+
+      let j = 0;
+      for (let i = 0; i < N; i++) {
+        if (i < j) [re[i], re[j]] = [re[j], re[i]];
+        let m = N >> 1;
+        while (m >= 1 && j >= m) {
+          j -= m;
+          m >>= 1;
+        }
+        j += m;
+      }
+
+      for (let len = 2; len <= N; len <<= 1) {
+        const ang = -2 * Math.PI / len;
+        const wlenRe = Math.cos(ang);
+        const wlenIm = Math.sin(ang);
+        for (let i = 0; i < N; i += len) {
+          let wRe = 1, wIm = 0;
+          for (let j = 0; j < len / 2; j++) {
+            const uRe = re[i + j];
+            const uIm = im[i + j];
+            const vRe = re[i + j + len / 2] * wRe - im[i + j + len / 2] * wIm;
+            const vIm = re[i + j + len / 2] * wIm + im[i + j + len / 2] * wRe;
+
+            re[i + j] = uRe + vRe;
+            im[i + j] = uIm + vIm;
+            re[i + j + len / 2] = uRe - vRe;
+            im[i + j + len / 2] = uIm - vIm;
+
+            const tmpRe = wRe * wlenRe - wIm * wlenIm;
+            wIm = wRe * wlenIm + wIm * wlenRe;
+            wRe = tmpRe;
+          }
+        }
+      }
+
+      const mag = new Float32Array(N / 2);
+      for (let i = 0; i < N / 2; i++) {
+        mag[i] = Math.sqrt(re[i] * re[i] + im[i] * im[i]);
+      }
+      return mag;
+    }
+
+    function heatColor(t) {
+      t = Math.min(Math.max(t, 0), 1);
+	  t = t * t;
+      const r = Math.floor(255 * Math.min(1, t * 3));
+      const g = Math.floor(255 * Math.min(1, Math.max(0, (t - 0.33) * 3)));
+      const b = Math.floor(255 * Math.max(0, (t - 0.66) * 3));
+      return `rgb(${r},${g},${b})`;
+    }
+
+    // Frequency Slider Logic
+    const freqSlider = document.getElementById('freqSlider');
+    const freqValueLabel = document.getElementById('freqValue');
+    freqSlider.value = 0;
+    freqValueLabel.textContent = '0';
+
+    freqSlider.addEventListener('input', () => {
+      const freq = parseInt(freqSlider.value);
+      freqValueLabel.textContent = freq;
+
+      if (writer) {
+        const cmd = new Uint8Array(3);
+        cmd[0] = 8;
+        cmd[1] = freq & 0xFF;
+        cmd[2] = (freq >> 8) & 0xFF;
+        writer.write(cmd);
+      }
+    });
+
+    function updateTopFrequencies(spectrum, binFreq) {
+      const freqs = [];
+      for (let i = 1; i < spectrum.length; i++) {
+        freqs.push({ freq: i * binFreq, amp: spectrum[i] });
+      }
+
+      freqs.sort((a, b) => b.amp - a.amp);
+      const top5 = freqs.slice(0, 5);
+
+      const lines = top5.map(f => `${f.freq.toFixed(1)} Hz | Amp: ${f.amp.toFixed(1)}`);
+      document.getElementById('topFreqs').textContent = lines.join('\n');
+    }
+
+    drawSpectrogram();
+  </script>
+</body>
+</html>
