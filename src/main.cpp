@@ -10,7 +10,7 @@
 #include "usb/usb_serial.h"
 USBSerial Serial;
 
-uint8_t sampleBuffer[32000];
+uint8_t sampleBuffer[40000];
 
 int dacFreq = 0;
 int ampLow = 0x2000;
@@ -67,6 +67,7 @@ int main(void)
 						rec();
 						delayMs(1000);
 						dacEnable(true);
+						delayMs(1000);
 						for(int i = 0; i < 256; i++)
 							sampleBuffer[i] = i;
 						for(int i = 0; i < 32; i++)
@@ -98,10 +99,11 @@ int main(void)
 				case 9:
 					play();
 					delayMs(800);
+					delayMs(2000);
 					//decodePacket(500, sampleBuffer, 256);
 					//Serial.write(sampleBuffer, 1600);
-					recordSamples(1000, sampleBuffer, 32000);
-					Serial.write(sampleBuffer, 32000);
+					recordSamples(1000, sampleBuffer, 40000);
+					Serial.write(sampleBuffer, 40000);
 					Serial.flush();
 					stop();
 					delayMs(500);
