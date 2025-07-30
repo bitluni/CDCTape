@@ -191,9 +191,10 @@
 		{
 			let maxP = 0;
 			let maxJ = 0;
-			for(let j = -2; j < 3; j++)
+			for(let j = -4; j < 5; j++)
 			{
-				let p = getByteFramePower(i + j);
+				//let p = getByteFramePower(i + j);
+				const [b, p] = decodeByte(i + j);
 				if(p > maxP)
 				{
 					maxP = p;
@@ -224,8 +225,8 @@
 		else
 		if(filterState == 1 && v < dcOffset - amp)
 			filterState = 0;
-		dcOffset = dcOffset * 0.95 + v * 0.05;
-		return filterState * 255;
+		dcOffset = dcOffset * 0.98 + v * 0.02;
+		return v - dcOffset + 128;//filterState * 255;
 	}
 
     async function readLoop() {
