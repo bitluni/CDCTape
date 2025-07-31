@@ -9,10 +9,16 @@
 int32_t dacCenter = 0x8000;
 int32_t dacAmplitude = 0x1400;
 
-inline void encodeByte(uint64_t &t0, uint64_t ticksPerWave, uint8_t b)
+inline void encodeByte(uint64_t &t0, uint64_t ticksPerWave, uint8_t b, bool startStopBits)
 {
-	int framedByte = 1 | (int(b) << 1);
-	for(int i = 0; i < 10; i++)
+	int bitCount = 8;
+	int framedByte = b;
+	if(startStopBits)
+	{
+		framedByte = 1 | (int(b) << 1);
+		bitCount = 10;
+	}
+	for(int i = 0; i < bitCount; i++)
 	{
 		uint64_t t = 0;
 		bool bit = (framedByte >> i) & 1;
@@ -33,7 +39,7 @@ inline void encodeByte(uint64_t &t0, uint64_t ticksPerWave, uint8_t b)
 	}
 }
 
-void encodePacket(int freq, uint8_t *data, size_t size)
+void encodePacket(int freq, uint8_t *data, size_t size, bool startStopBits = false)
 {
 	const uint64_t ticksPerWave = (144000000LL / freq);
 	uint64_t t0 = getTime();
@@ -42,10 +48,10 @@ void encodePacket(int freq, uint8_t *data, size_t size)
 	while(getTime() - t0 < ticksPerWave * 20); //byte of slience
 
 	t0 = getTime();
-	encodeByte(t0, ticksPerWave, 0b01010011); // sync byte
+	encodeByte(t0, ticksPerWave, 0b01010011, startStopBits); // sync byte
 	//encode the actual bytes
 	for(size_t b = 0; b < size; b++)
-		encodeByte(t0, ticksPerWave, data[b]);
+		encodeByte(t0, ticksPerWave, data[b], false);
 }
 
 

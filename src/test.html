@@ -109,22 +109,41 @@
 		return [b, pow];
 	}
 
-	function decodeByte(start)
+	function decodeByte(start, startStopBits)
 	{
 		let b = 0;
 		let pow = 0x7fffffff;
-		for(let i = 0; i < 10; i++)
+		const wavesPerBit = 2;
+		const samplesPerWave = 32;
+		const bitsPerWord = startStopBits ? 10 : 8;
+		const samplesPerBit = samplesPerWave * wavesPerBit;
+		const samplesPerWord = samplesPerBit * bitsPerWord;
+		const samplesPerWaveDiv2 = samplesPerWave >> 1;
+		const samplesPerWaveDiv4 = samplesPerWave >> 2;
+
+		for(let i = 0; i < bitsPerWord; i++)
 		{
-			let p = start + i * 64;
+			let p = start + i * samplesPerBit;
 			let pow0 = 0;
 			let pow1 = 0;
-			for(let j = 0; j < 64; j++)
+			//matching square wave instead of sine
+			for(let k = 0; k < wavesPerBit; k++)
+			{
+				for(let j = 0; j < samplesPerWaveDiv2; j++)
+					pow1 += raw[p + k * wavesPerBit + j] - 
+							raw[p + k * wavesPerBit + j + samplesPerWaveDiv2];
+				for(let j = 0; j < samplesPerWaveDiv4; j++)
+					pow0 += raw[p + k * wavesPerBit + j] - 
+							raw[p + k * wavesPerBit + j + samplesPerWaveDiv4] +
+							raw[p + k * wavesPerBit + j + samplesPerWaveDiv2] - 
+							raw[p + k * wavesPerBit + j + samplesPerWaveDiv2 + samplesPerWaveDiv4];
+			}
+
+			/*for(let j = 0; j < 64; j++)
 			{
 				pow1 += Math.sin(Math.PI * 2 / 32 * j) * raw[p + j];
 				pow0 += Math.sin(Math.PI * 4 / 32 * j) * raw[p + j];
-			}
-			//pow1 *= pow1;
-			//pow0 *= pow0;
+			}*/
 			if(pow0 < pow1)
 			{
 				b |= 1 << i;
@@ -140,13 +159,15 @@
 		return [b, pow];
 	}
 
-	function findSync()
+	function findSync(startStopBits = false)
 	{
+		const thresholdPower = 400;
+		const syncWord = startStopBits ? 0b0010100111 : 0b01010011;
 		let syncPow = 0;
 		for(let i = 0; i < rawPos; i++)
 		{
-			const [b, pow] = decodeByte(i);
-			if(b == 0b0010100111 && pow > 500)
+			const [b, pow] = decodeByte(i, startStopBits);
+			if(b == syncWord && pow > thresholdPower)
 			{
 				if(syncPow < pow)
 					syncPow = pow;
@@ -165,50 +186,61 @@
 
 	function getByteFramePower(p)
 	{
+		//only with start stop bits
 		let pow = 0;
-		for(let j = 0; j < 64; j++)
+		const wavesPerBit = 2;
+		const samplesPerBit = 32 * wavesPerBit;
+		for(let j = 0; j < samplesPerBit; j++)
 		{
-			pow += Math.sin(Math.PI * 2 / 32 * j) * raw[p + j];
-			pow += Math.sin(Math.PI * 4 / 32 * j + 640 - 64) * raw[p + j];
+			pow += Math.sin(Math.PI * 2 / 32 * j) * raw[p + j]; //matching leading 1
+			pow += Math.sin(Math.PI * 4 / 32 * j + samplesPerBit * 9) * raw[p + j];	//mathing trailing 0
 		}
 		return pow;
 	}
 
-	function decode(start)
+	function decode(start, startStopBits = false)
 	{
 		console.clear();
-		console.log("sync power: " + decodeByte(start));
+		console.log("sync power: " + decodeByte(start, startStopBits));
 		let bytesDecoded = 0;
+		const wavesPerBit = 2;
+		const samplesPerWave = 32;
+		const bitsPerWord = startStopBits ? 10 : 8;
+		const samplesPerBit = samplesPerWave * wavesPerBit;
+		const samplesPerWord = samplesPerBit * bitsPerWord;
+		const syncCorrection = 4;
 		for(let j = 0; j < 1600; j++)
-			if((j & 63) == 0 && j > 63)
+			if((j % samplesPerBit) == 0 && j >= samplesPerBit)
 				plot(255);
 			else
-				plot(raw[start - 64 + j]);
-		start += 640; //skip sync byte
-		//return;
-		let byteSamples = 0;
-		for(let i = start; i < rawPos; i += 640)
+				plot(raw[start - samplesPerBit + j]);
+		start += samplesPerWord; //skip sync byte
+
+		for(let i = start; i < rawPos; i += samplesPerWord)
 		{
 			let maxP = 0;
 			let maxJ = 0;
-			for(let j = -4; j < 5; j++)
+			let maxB = 0;
+			for(let j = -syncCorrection; j <= syncCorrection; j++)
 			{
 				//let p = getByteFramePower(i + j);
-				const [b, p] = decodeByte(i + j);
+				const [b, p] = decodeByte(i + j, startStopBits);
 				if(p > maxP)
 				{
 					maxP = p;
 					maxJ = j;
+					maxB = b;
 				}
 			}
 			i += maxJ;
-			const [b, pow] = decodeByte(i);
+			const b = startStopBits? (maxB >> 1) & 0xff : maxB;
+			const pow = maxP;
 			if(pow <= 0)
 			{
 				console.log("lost sync " + pow);
 				return;
 			}
-			console.log(((b >> 1) & 0xff) + " " + pow + " " + maxP);
+			console.log(b + " " + pow + " " + maxP);
 			//plot((b >> 1) & 0xff);
 			bytesDecoded++;
 		}

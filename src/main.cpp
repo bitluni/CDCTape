@@ -71,7 +71,7 @@ int main(void)
 						for(int i = 0; i < 256; i++)
 							sampleBuffer[i] = i;
 						for(int i = 0; i < 32; i++)
-							encodePacket(1000, sampleBuffer, 32);
+							encodePacket(1000, sampleBuffer, 32, false);
 
 						/*uint64_t t0 = getTime();
 						while (getTime() - t0 < ms2ticks(5000))
@@ -99,7 +99,7 @@ int main(void)
 				case 9:
 					play();
 					delayMs(800);
-					delayMs(2000);
+					delayMs(1000);
 					//decodePacket(500, sampleBuffer, 256);
 					//Serial.write(sampleBuffer, 1600);
 					recordSamples(1000, sampleBuffer, 40000);
