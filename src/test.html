@@ -21,6 +21,10 @@
       padding: 10px 20px;
       font-size: 16px;
     }
+	input
+	{
+		width: 1600px;
+	}
 	textarea{
 		width: 1600px;
 		min-height: 50px;
@@ -44,9 +48,9 @@
     <button onclick="sendByte(7)">Read ADC</button>
     <button onclick="sendByte(9)">Read Test</button>
     <button onclick="decode(findSync())">Sync & Decode</button>
-	<input id="start" type="range" min="0" max="32000" value="0" oninput="decode(this.value * 1);">
   </div>
   <canvas id="scope" width="1600" height="200"></canvas>
+  <input id="start" type="range" min="0" max="32000" value="0" oninput="decode(this.value * 1);">
   <textarea></textarea>
   <script>
     let port;
