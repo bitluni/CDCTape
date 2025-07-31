@@ -21,6 +21,13 @@
       padding: 10px 20px;
       font-size: 16px;
     }
+	textarea{
+		width: 1600px;
+		min-height: 50px;
+		resize: vertical;
+		background-color: #111;
+		color: lightgray;
+	}
   </style>
 </head>
 <body>
@@ -40,7 +47,7 @@
 	<input id="start" type="range" min="0" max="32000" value="0" oninput="decode(this.value * 1);">
   </div>
   <canvas id="scope" width="1600" height="200"></canvas>
-
+  <textarea></textarea>
   <script>
     let port;
     let writer;
@@ -199,20 +206,29 @@
 		return pow;
 	}
 
-	function decode(start, startStopBits = false)
+	function logClear()
 	{
 		console.clear();
-		console.log("sync power: " + decodeByte(start, startStopBits));
+		document.querySelector("textarea").value = "";
+	}
+
+	function log(t)
+	{
+		console.log(t);
+		document.querySelector("textarea").value += t;
+	}
+
+	function decode(start, startStopBits = false)
+	{
+		logClear();
+		log("sync power: " + decodeByte(start, startStopBits) + "\n");
 		let bytesDecoded = 0;
 		const bitsPerWord = startStopBits ? 10 : 8;
 		const samplesPerBit = samplesPerWave * wavesPerBit;
 		const samplesPerWord = samplesPerBit * bitsPerWord;
 		const syncCorrection = 4;
 		for(let j = 0; j < 1600; j++)
-			if((j % samplesPerBit) == 0 && j >= samplesPerBit)
-				plot(255);
-			else
-				plot(raw[start - samplesPerBit + j]);
+			plot(raw[start - samplesPerBit + j]);
 		start += samplesPerWord; //skip sync byte
 
 		for(let i = start; i < rawPos; i += samplesPerWord)
@@ -236,10 +252,10 @@
 			const pow = maxP;
 			if(pow <= 0)
 			{
-				console.log("lost sync " + pow);
+				log("\nlost sync " + pow);
 				return;
 			}
-			console.log(b + " " + pow + " " + maxP);
+			log(b + "(" + pow + ") ");
 			//plot((b >> 1) & 0xff);
 			bytesDecoded++;
 		}
@@ -293,7 +309,9 @@
         else ctx.lineTo(x, y);
       }
       ctx.stroke();
-
+	  ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+      for (let x = 0; x < canvas.width; x+= samplesPerWave * wavesPerBit) 
+		  ctx.fillRect(x, 0, 1, canvas.height);
       requestAnimationFrame(drawScope);
     }
 
