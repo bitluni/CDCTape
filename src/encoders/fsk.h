@@ -11,6 +11,7 @@ int32_t dacAmplitude = 0x1400;
 
 inline void encodeByte(uint64_t &t0, uint64_t ticksPerWave, uint8_t b, bool startStopBits)
 {
+	const int wavesPerBit = 1;
 	int bitCount = 8;
 	int framedByte = b;
 	if(startStopBits)
@@ -33,19 +34,21 @@ inline void encodeByte(uint64_t &t0, uint64_t ticksPerWave, uint8_t b, bool star
 			if(bit) p >>= 1;
 			dacWrite(dacCenter + ((dacAmplitude * sinTab[p & 0xff]) >> 7));
 
-		}while(t < ticksPerWave * 2);
+		}while(t < ticksPerWave * wavesPerBit);
 		dacWrite(dacCenter);
-		t0 += ticksPerWave * 2;
+		t0 += ticksPerWave * wavesPerBit;
 	}
 }
 
 void encodePacket(int freq, uint8_t *data, size_t size, bool startStopBits = false)
 {
+	const int wavesPerBit = 1;
+	const int bitsPerWord = startStopBits ? 10 : 8;
 	const uint64_t ticksPerWave = (144000000LL / freq);
 	uint64_t t0 = getTime();
 	//sync
 	dacWrite(dacCenter);
-	while(getTime() - t0 < ticksPerWave * 20); //byte of slience
+	while(getTime() - t0 < ticksPerWave * wavesPerBit * bitsPerWord); //byte of slience
 
 	t0 = getTime();
 	encodeByte(t0, ticksPerWave, 0b01010011, startStopBits); // sync byte

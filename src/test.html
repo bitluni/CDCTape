@@ -109,12 +109,13 @@
 		return [b, pow];
 	}
 
+	const wavesPerBit = 1;
+	const samplesPerWave = 32;
+
 	function decodeByte(start, startStopBits)
 	{
 		let b = 0;
 		let pow = 0x7fffffff;
-		const wavesPerBit = 2;
-		const samplesPerWave = 32;
 		const bitsPerWord = startStopBits ? 10 : 8;
 		const samplesPerBit = samplesPerWave * wavesPerBit;
 		const samplesPerWord = samplesPerBit * bitsPerWord;
@@ -203,8 +204,6 @@
 		console.clear();
 		console.log("sync power: " + decodeByte(start, startStopBits));
 		let bytesDecoded = 0;
-		const wavesPerBit = 2;
-		const samplesPerWave = 32;
 		const bitsPerWord = startStopBits ? 10 : 8;
 		const samplesPerBit = samplesPerWave * wavesPerBit;
 		const samplesPerWord = samplesPerBit * bitsPerWord;
