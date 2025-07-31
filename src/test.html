@@ -111,6 +111,7 @@
 
 	const wavesPerBit = 1;
 	const samplesPerWave = 32;
+	const thresholdPower = 100;
 
 	function decodeByte(start, startStopBits)
 	{
@@ -162,7 +163,6 @@
 
 	function findSync(startStopBits = false)
 	{
-		const thresholdPower = 400;
 		const syncWord = startStopBits ? 0b0010100111 : 0b01010011;
 		let syncPow = 0;
 		for(let i = 0; i < rawPos; i++)
