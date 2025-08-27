@@ -75,13 +75,6 @@ int main(void)
 						for(int i = 0; i < 2; i++)
 							encodePacket(1500, sampleBuffer, 512, false);
 
-						/*uint64_t t0 = getTime();
-						while (getTime() - t0 < ms2ticks(5000))
-						{
-							//uint64_t t = getTime(); 
-							dacWrite(tone(1200, 0x8000 - 0x1400, 0x8000 + 0x1400));
-						}*/
-
 						dacEnable(false);
 						stop();
 						delayMs(1000);
@@ -102,8 +95,6 @@ int main(void)
 					play();
 					delayMs(800);
 					delayMs(1500);
-					//decodePacket(500, sampleBuffer, 256);
-					//Serial.write(sampleBuffer, 1600);
 					recordSamples(1500, sampleBuffer, 40000);
 					Serial.write(sampleBuffer, 40000);
 					Serial.flush();
@@ -112,21 +103,25 @@ int main(void)
 					rew();
 					break;
 				case 10:
+				{
 					play();
 					delayMs(800);
 					delayMs(1500);
-					recordSamples(1500, sampleBuffer, 40000);
+//					recordSamples(1500, sampleBuffer, 40000);
+					const int timeout = 10000; // 10 seconds
+					bool packetFound = decodePacket(1500, decodedData, 1024, decodedDataSize, timeout);
 					stop();
 					delayMs(800);
-					rew();
-					decodeFromBuffer(sampleBuffer, 40000, decodedData, 1024, decodedDataSize);
-					/*decodedDataSize = 10;
-					for(int i = 0; i < 10; i++)
-						decodedData[i] = i;*/
+					decodedDataSize++; //packetFound indicator
 					Serial.write((uint8_t*)&decodedDataSize, 4);
+					Serial.write((uint8_t)(packetFound ? 1 : 0));
 					Serial.write(decodedData, decodedDataSize);
 					Serial.flush();
+
+					rew();
+//					decodeFromBuffer(sampleBuffer, 40000, decodedData, 1024, decodedDataSize);
 					break;
+				}
 				default:
 					break;
 			}

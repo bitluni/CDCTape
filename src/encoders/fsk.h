@@ -19,7 +19,9 @@ int32_t dacAmplitude = 0x1400;
 
 constexpr int runningSumSampleCount = 32 * 8;
 constexpr int runningSumSampleCountMask = runningSumSampleCount - 1;
-uint16_t runningSumSamples[runningSumSampleCount];
+typedef uint8_t adcSampleType;
+constexpr adcSampleType centerLevel = 128;
+adcSampleType runningSumSamples[runningSumSampleCount];
 int runningSumSamplePos = 0;
 int runningSums[8][2];
 int runningSumAvgSum = 0;
@@ -109,25 +111,24 @@ void runningSumInit()
 		runningSums[i][0] = 0;
 		runningSums[i][1] = 0;
 	}
-	constexpr uint16_t centerLevel = 2048;
 	for(int i = 0; i < runningSumSampleCount; i++)
 		runningSumSamples[i] = centerLevel;
 	runningSumAvgSum = runningSumSampleCount * centerLevel;
 	runningSumAvg = centerLevel;
 }
 
-inline uint16_t runningSumSampleAt(int bit, int pos)
+inline adcSampleType runningSumSampleAt(int bit, int pos)
 {
 	return runningSumSamples[(runningSumSamplePos + (bit * 32 + pos)) & runningSumSampleCountMask];
 }
 
-inline void runningSumPushSample(uint16_t sample)
+inline void runningSumPushSample(adcSampleType sample)
 {
 	runningSumSamples[runningSumSamplePos] = sample;
 	runningSumSamplePos = (runningSumSamplePos + 1) & runningSumSampleCountMask;
 }
 
-void maintainRunningSums(uint16_t newSample)
+void maintainRunningSums(adcSampleType newSample)
 {
 	//maintain avg sum
 	runningSumAvgSum -= runningSumSampleAt(0, 0);
@@ -198,20 +199,33 @@ int runningSumSilenceLevel()
 	return power;
 }
 
-void decodeFromBuffer(uint8_t *buffer, int size, uint8_t *decodedBuffer, int decodedBufferSize, int &decodedBytes)
+bool decodePacket(int freq, uint8_t *decodedBuffer, int decodedBufferSize, int &decodedBytes, int timeout = 10000)
 {
 	decodedBytes = 0;
-	if(!decodedBufferSize) return;
+	if(!decodedBufferSize) 
+		return false;
+
+	const uint32_t ticksPerWave = 144000000 / freq;
+	const uint32_t ticksPerSample = ticksPerWave >> 5;
+
 	constexpr int maxCorrection = 4;
 	constexpr int historySize = maxCorrection * 2 + 1;
+	uint64_t timeoutTicks = ms2ticks(timeout);
 	int 	historyPower[historySize]; 
 	uint8_t historyData [historySize];
 	int syncBytesFound = 0;
 	runningSumInit();
 	int samplesSinceLastByte = 0;
-	for(int i = 0; i < size; i++)
+
+	uint64_t t0 = getTime();
+	uint64_t t = t0;
+	while(t - t0 < timeoutTicks || syncBytesFound > 0)
 	{
-		maintainRunningSums(buffer[i]);
+		while(getTime() - t < ticksPerSample);
+		t += ticksPerSample;
+		adcSampleType adcValue = getLastAdc() >> 4;
+	
+		maintainRunningSums(adcValue);
 		int powerLevel = runningSumSilenceLevel();
 		uint8_t decodedByte = 0;
 		int power = 0;
@@ -259,7 +273,7 @@ void decodeFromBuffer(uint8_t *buffer, int size, uint8_t *decodedBuffer, int dec
 				//byte out of sync
 				if(maxPower <= 0) //sync lost
 				{
-					return;
+					return true;
 				}
 				//write back best byte
 				uint8_t dataByte = historyData[maxPowerOffset];
@@ -278,10 +292,12 @@ void decodeFromBuffer(uint8_t *buffer, int size, uint8_t *decodedBuffer, int dec
 				}
 				samplesSinceLastByte = historySize - 1 - maxPowerOffset;
 				if(decodedBytes == decodedBufferSize)
-					return;
+					return true;
 			}
 			else
 				samplesSinceLastByte++;
 		}
 	}
+	//timeout
+	return false;
 }
