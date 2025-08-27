@@ -10,14 +10,14 @@
 #include "usb/usb_serial.h"
 USBSerial Serial;
 
-uint8_t sampleBuffer[40000];
-uint8_t decodedData[1024];
-int decodedDataSize = 0;
+constexpr uint32_t sampleBufferSize = 50000;
+uint8_t sampleBuffer[sampleBufferSize];
 
 int dacFreq = 0;
 int ampLow = 0x2000;
 int ampHigh = 0x3f00;
 bool adcEnabled = false;
+constexpr int encodeFreq = 1000;
 
 int main(void)
 {
@@ -73,7 +73,7 @@ int main(void)
 						for(int i = 0; i < 512; i++)
 							sampleBuffer[i] = i & 255;
 						for(int i = 0; i < 2; i++)
-							encodePacket(1500, sampleBuffer, 512, false);
+							encodePacket(encodeFreq, sampleBuffer, 512);
 
 						dacEnable(false);
 						stop();
@@ -95,8 +95,8 @@ int main(void)
 					play();
 					delayMs(800);
 					delayMs(1500);
-					recordSamples(1500, sampleBuffer, 40000);
-					Serial.write(sampleBuffer, 40000);
+					recordSamples(encodeFreq, sampleBuffer, sampleBufferSize);
+					Serial.write(sampleBuffer, sampleBufferSize);
 					Serial.flush();
 					stop();
 					delayMs(500);
@@ -107,20 +107,35 @@ int main(void)
 					play();
 					delayMs(800);
 					delayMs(1500);
-//					recordSamples(1500, sampleBuffer, 40000);
 					const int timeout = 10000; // 10 seconds
-					bool packetFound = decodePacket(1500, decodedData, 1024, decodedDataSize, timeout);
+					int decodedDataSize = 0;
+					bool packetFound = decodePacket(encodeFreq, sampleBuffer, sampleBufferSize, decodedDataSize, timeout);
 					stop();
 					delayMs(800);
 					decodedDataSize++; //packetFound indicator
 					Serial.write((uint8_t*)&decodedDataSize, 4);
 					Serial.write((uint8_t)(packetFound ? 1 : 0));
-					Serial.write(decodedData, decodedDataSize);
+					Serial.write(sampleBuffer, decodedDataSize);
 					Serial.flush();
-
 					rew();
-//					decodeFromBuffer(sampleBuffer, 40000, decodedData, 1024, decodedDataSize);
 					break;
+				}
+				case 11:
+				{
+					uint32_t fileLength = 0;
+					for(int i = 0; i < 4; i++)
+						fileLength |= Serial.read() << (i * 8);
+					for(uint32_t i = 0; i < fileLength; i++)
+						sampleBuffer[i] = Serial.read();
+					rec();
+					delayMs(1000);
+					dacEnable(true);
+					delayMs(1000);
+					encodePacket(encodeFreq, sampleBuffer, fileLength);
+					dacEnable(false);
+					stop();
+					delayMs(1000);
+					rew();
 				}
 				default:
 					break;

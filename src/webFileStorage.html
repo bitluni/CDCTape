@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>WebSerial Microsette</title>
+  <style>
+	:root {
+		/*min-height: 100svh;*/
+		display: grid;
+		place-items: center;
+		padding: 2rem;
+	}
+	.wrap { width: min(900px, 95vw); }
+	h1 { font-weight: 700; letter-spacing: 0.2px; margin: 0 0 1rem; font-size: clamp(1.1rem, 1.2rem + 0.5vw, 1.6rem); color: var(--accent-2); }
+	p.lead { margin-top: 0; color: var(--muted); }
+
+
+	.dropzone {
+		position: relative;
+		background: linear-gradient(180deg, rgba(64,64,255,0.1), rgba(64,64,255,0.05));
+		border: 2px dashed var(--border);
+		border-radius: 22px;
+		padding: 5px;
+		outline: none;
+		cursor: pointer;
+		transition: transform 120ms ease, box-shadow 120ms ease, background 120ms ease, border-color 120ms ease;
+		user-select: none;
+	}
+	.dropzone:hover { transform: translateY(-1px); }
+	.dropzone:focus-visible { box-shadow: 0 0 0 6px var(--ring); border-color: var(--accent); }
+	.dropzone.is-dragover { background: linear-gradient(180deg, rgba(110,168,254,0.12), rgba(255,255,255,0.03)); border-color: var(--accent); }
+
+
+	.zone-content { display: grid; place-items: center; gap: .5rem; text-align: center; padding: 5px; }
+	.zone-title { font-weight: 600; }
+	.zone-hint { color: var(--muted); font-size: 0.95rem; }
+
+
+	.status { margin-top: 1rem; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+
+
+	pre.preview {
+		margin: 1rem 0 0;
+		background: #0d132a;
+		border: 1px solid var(--border);
+		border-radius: 16px;
+		padding: 1rem;
+		overflow: auto;
+		max-height: 40vh;
+		line-height: 1.35;
+		font-size: 0.9rem;
+	}
+	.row { display: flex; gap: .6rem; flex-wrap: wrap; align-items: center; }
+	.btn {
+		appearance: none; border: 1px solid var(--border); background: #1b2656; color: var(--text);
+		padding: .6rem .9rem; border-radius: 12px; cursor: pointer; font-weight: 600;
+		transition: transform 120ms ease, box-shadow 120ms ease, border-color 120ms ease;
+		border-width: 1px;
+		border-color:lightskyblue;
+		border-style: solid;
+		margin: 5px;
+	}
+	.btn:hover { 
+		transform: translateY(-1px);
+		border-color: white;
+	}
+	.btn:focus-visible { outline: none; box-shadow: 0 0 0 6px var(--ring); border-color: var(--accent); }
+	.muted { color: var(--muted); }
+
+
+    body {
+      font-family: sans-serif;
+      background: #111;
+      color: white;
+      text-align: center;
+      padding: 20px;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>WebSerial Microsette</h1>
+
+	<div>
+		<button class="btn primary" onclick="connectSerial()">Connect</button>
+		<button class="btn primary" onclick="sendByte(1)">Stop</button>
+		<button class="btn primary" onclick="sendByte(3)">Rew</button>
+		<button class="btn primary" onclick="sendByte(4)">FF</button>
+	</div>
+
+	<div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="Drop a file here">
+		<input id="fileInput" type="file" hidden />
+		<div class="zone-content">
+			<svg width="56" height="56" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+				<path d="M12 16V8m0 0-3 3m3-3 3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+				<rect x="3" y="4" width="18" height="16" rx="4" ry="4" stroke="currentColor" stroke-width="1.5" fill="none"/>
+			</svg>
+			<div class="zone-title">Drop file to tape</div>
+		</div>
+	</div>
+
+	<div>
+		<button class="btn primary" onclick="sendByte(10); decodeData();">Read file from tape</button>
+		<pre class="preview" id="preview" aria-live="polite"></pre>
+	</div>
+	<pre class="preview" id="log" aria-live="polite"></pre>
+  <script>
+    let port;
+    let writer;
+    let reader;
+
+    async function connectSerial() {
+      try {
+        port = await navigator.serial.requestPort();
+        await port.open({ baudRate: 115200 });
+
+        writer = port.writable.getWriter();
+        reader = port.readable.getReader();
+
+      } catch (err) {
+        alert('Serial connection failed: ' + err);
+      }
+    }
+
+    function sendByte(byte) {
+      if (!writer) return;
+      writer.write(new Uint8Array([byte]));
+    }
+
+	function logClear()
+	{
+		console.clear();
+		logEl.textContent = "";
+	}
+
+	function log(t)
+	{
+		console.log(t);
+		logEl.textContent += t;
+	}
+
+	async function decodeData()
+	{
+		logClear();
+		const data = await readData();
+		if(data[0] == 1)
+		{
+			log(`Loaded ${data.length - 5} bytes`);
+			previewEl.textContent = renderHexPreview(data);
+		}
+		else
+			log(`File not found`);
+	}
+
+	function logData(data)
+	{
+		log("decoded block:\n");
+		for(let i = 0; i < data.length; i++)
+		{
+			log("" + data[i] + ", ");
+		}
+		log("\n");
+	}
+
+	async function readData() 
+	{
+		try {
+			let header = new Uint8Array(4);
+			let headerPos = 0;
+			let expectedLength = null;
+			let raw = null;
+			let rawPos = 0;
+
+			while (true) {
+				const { value, done } = await reader.read();
+				if (done) throw new Error("Stream ended unexpectedly");
+
+				if (!value) continue;
+
+				let offset = 0;
+
+				// --- Fill header first ---
+				if (headerPos < 4) {
+					while (offset < value.length && headerPos < 4) {
+						header[headerPos++] = value[offset++];
+					}
+					// If header just completed, parse length
+					if (headerPos === 4) {
+						expectedLength = new DataView(header.buffer).getUint32(0, true); // little-endian
+						raw = new Uint8Array(expectedLength);
+						rawPos = 0;
+						console.log("Expecting", expectedLength, "bytes");
+					}
+				}
+
+				// --- Copy remaining data into payload ---
+				if (expectedLength !== null && offset < value.length) {
+					let toCopy = Math.min(value.length - offset, expectedLength - rawPos);
+					raw.set(value.subarray(offset, offset + toCopy), rawPos);
+					rawPos += toCopy;
+					offset += toCopy;
+
+					// --- Check if done ---
+					if (rawPos === expectedLength) {
+						return raw;
+					}
+				}
+			}
+		} catch (error) {
+			console.error("Read error:", error);
+			return null;
+		} /*finally {
+			reader.releaseLock();
+		}*/
+	}
+
+	//file dropper
+	const dropzone = document.getElementById('dropzone');
+	const fileInput = document.getElementById('fileInput');
+	const previewEl = document.getElementById('preview');
+	const logEl = document.getElementById('log');
+
+	// Expose the latest bytes globally for easy reuse elsewhere in your app
+	window.lastByteArray = null; // Uint8Array | null
+	window.lastFile = null; // File | null
+
+	const openPicker = () => fileInput.click();
+
+	dropzone.addEventListener('click', openPicker);
+	dropzone.addEventListener('keydown', (e) => {
+	if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openPicker(); }
+	});
+
+	// Visual drag-over state
+	const onDrag = (e) => { e.preventDefault(); e.stopPropagation(); dropzone.classList.add('is-dragover'); if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'; };
+	const onDragEnd = (e) => { e.preventDefault(); e.stopPropagation(); dropzone.classList.remove('is-dragover'); };
+
+	['dragenter','dragover'].forEach(evt => dropzone.addEventListener(evt, onDrag));
+	['dragleave','dragend','drop'].forEach(evt => dropzone.addEventListener(evt, onDragEnd));
+
+	dropzone.addEventListener('drop', (e) => {
+		e.preventDefault();
+		const file = e.dataTransfer?.files?.[0];
+		if (file) handleFile(file);
+	});
+
+	fileInput.addEventListener('change', () => {
+		const file = fileInput.files?.[0];
+		if (file) handleFile(file);
+		fileInput.value = ''; // Allow re-selecting the same file
+	});
+
+	function handleFile(file) {
+		logEl.textContent = `Reading ${file.name} (${file.type || 'application/octet-stream'}, ${file.size} bytes)…`;
+		previewEl.textContent = '';
+		window.lastFile = file;
+
+		const reader = new FileReader();
+		reader.onload = () => {
+			/** @type {ArrayBuffer} */
+			const buffer = reader.result;
+			/** @type {Uint8Array} */
+			const bytes = new Uint8Array(buffer);
+			window.lastByteArray = bytes;
+			logEl.textContent = `Loaded ${file.name} → ${bytes.length} bytes`;
+			previewEl.textContent = renderHexPreview(bytes);
+			const totalLength = bytes.length + 12 + 4;
+			sendByte(11);	//write file
+			sendByte((totalLength >>  0) & 255);
+			sendByte((totalLength >>  8) & 255);
+			sendByte((totalLength >> 16) & 255);
+			sendByte((totalLength >> 24) & 255);
+			const file12 = file.name.padEnd(12, '\0');
+			for(let i = 0; i < 12; i++)
+				sendByte(file12.charCodeAt(i))
+			for(let i = 0; i < 4; i++)
+				sendByte((bytes.length >> (8 * i)) & 255);
+			for(let i = 0; i < bytes.length; i++)
+				sendByte(bytes[i]);
+		};
+		reader.onerror = () => {
+			logEl.textContent = `Error: ${reader.error?.message || 'Unknown read error'}`;
+			};
+		reader.readAsArrayBuffer(file);
+	}
+
+	function renderHexPreview(bytes) {
+		const max = bytes.length;//Math.min(bytes.length, 256);
+		let out = '';
+		for (let i = 0; i < max; i += 16) {
+		const row = bytes.slice(i, i + 16);
+		const hex = Array.from(row, b => b.toString(16).padStart(2, '0')).join(' ');
+		const ascii = Array.from(row, b => (b >= 32 && b <= 126) ? String.fromCharCode(b) : '.').join('');
+		out += i.toString(16).padStart(8, '0') + ' ' + hex.padEnd(16 * 3) + ' ' + ascii + '\n';
+		}
+		if (bytes.length > max) out += `… (${bytes.length - max} more bytes)`;
+		return out;
+	}
+
+	window.getBytesArray = () => window.lastByteArray ? Array.from(window.lastByteArray) : null;
+
+	function makeDownloadLink(bytes, filename) 
+	{
+		// Turn bytes into a Blob
+		const blob = new Blob([bytes], { type: "application/octet-stream" });
+		// Create an object URL
+		const url = URL.createObjectURL(blob);
+
+		// Create <a> element
+		const a = document.createElement("a");
+		a.href = url;
+		a.download = filename;
+		a.textContent = `Download ${filename}`;
+
+		// Optional: revoke URL after click
+		a.addEventListener("click", () => {
+			setTimeout(() => URL.revokeObjectURL(url), 1000);
+		});
+		document.body.appendChild(a);
+		a.click();
+		document.body.removeChild(a);
+	}
+
+</script>
+
+  </script>
+</body>
+</html>
