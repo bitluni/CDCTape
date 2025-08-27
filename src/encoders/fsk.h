@@ -6,8 +6,28 @@
 #include "adc.h"
 #include <cstddef>
 
+#ifndef max
+#define max(a, b) ((a)>(b)?(a):(b))
+#endif
+
+#ifndef min
+#define min(a, b) ((a)<(b)?(a):(b))
+#endif
+
 int32_t dacCenter = 0x8000;
 int32_t dacAmplitude = 0x1400;
+
+constexpr int runningSumSampleCount = 32 * 8;
+constexpr int runningSumSampleCountMask = runningSumSampleCount - 1;
+uint16_t runningSumSamples[runningSumSampleCount];
+int runningSumSamplePos = 0;
+int runningSums[8][2];
+int runningSumAvgSum = 0;
+int runningSumAvg = 0;
+const int syncByteCount = 4;
+const uint8_t syncBytes[syncByteCount] = {'S', 'Y', 'N', 'C'};
+constexpr int syncPowerTheshold = 100;
+
 
 inline void encodeByte(uint64_t &t0, uint64_t ticksPerWave, uint8_t b, bool startStopBits)
 {
@@ -48,15 +68,16 @@ void encodePacket(int freq, uint8_t *data, size_t size, bool startStopBits = fal
 	uint64_t t0 = getTime();
 	//sync
 	dacWrite(dacCenter);
-	while(getTime() - t0 < ticksPerWave * wavesPerBit * bitsPerWord); //byte of slience
+	while(getTime() - t0 < ticksPerWave * wavesPerBit * bitsPerWord * 2); //2 bytes of slience
 
 	t0 = getTime();
-	encodeByte(t0, ticksPerWave, 0b01010011, startStopBits); // sync byte
+//	encodeByte(t0, ticksPerWave, 0b01010011, startStopBits); // sync byte
+	for(int i = 0; i < syncByteCount; i++)	
+		encodeByte(t0, ticksPerWave, syncBytes[i], startStopBits); // sync byte
 	//encode the actual bytes
 	for(size_t b = 0; b < size; b++)
 		encodeByte(t0, ticksPerWave, data[b], false);
 }
-
 
 inline uint32_t nextSample(uint64_t &t)
 {
@@ -64,30 +85,7 @@ inline uint32_t nextSample(uint64_t &t)
 	return getLastAdc();
 }
 
-int decodeByte(uint16_t *samples, int pos, int64_t &pow)
-{
-	int mask = (32 * 8) - 1;
-	uint8_t b = 0;
-	pow = 0;
-	for(int i = 0; i < 8; i++)
-	{
-		int p0 = pos + i * 32;
-		int pow0 = samples[(p0 + 8) & mask] - samples[pos + 8];
-		int pow1 = (samples[(p0 + 4) & mask] - samples[(p0 + 12) & mask] +
-					samples[(p0 + 20) & mask] - samples[(p0 + 28) & mask]) >> 1;
-		pow0 *= pow0;
-		pow1 *= pow1;
-		if(pow0 < pow1)
-		{
-			b |= 1 << i;
-			pow += pow1;
-		}
-		else
-			pow += pow0;
-	}
-	return b;
-}
-
+//sampling rate is freq * 32
 void recordSamples(int freq, uint8_t *buffer, size_t size)
 {
 	const uint32_t ticksPerWave = 144000000 / freq;
@@ -104,57 +102,186 @@ void recordSamples(int freq, uint8_t *buffer, size_t size)
 	}
 }
 
-void decodePacket(int freq, uint8_t *buffer, size_t size)
+void runningSumInit()
 {
-	if(!size) return;
-	const uint32_t ticksPerWave = 144000000 / freq;
-	const uint32_t ticksPerSample = ticksPerWave >> 5;
-	size_t bufferPos = 0;
-	bool sync = false;
-	int64_t syncPow = 0;
-	
-	//store history of samples
-	const int samplesPerByte = 32 * 8;
-	uint16_t samples[samplesPerByte];
-	int samplePos = 0;
-	int samplesCurrentByte = 0;
-	for(int i = 0; i < samplesPerByte; i++)
-		samples[i] = 0;
-
-	uint64_t t = getTime();
-	while(bufferPos < size)
+	for(int i = 0; i < 8; i++)
 	{
-		t += ticksPerSample;
-		while(getTime() < t);
-		samples[samplePos++] = getLastAdc();
-		samplePos = (samplePos + 1) & (samplesPerByte - 1);
-		int64_t pow = 0;
-		uint8_t decodedByte = decodeByte(samples, (samplePos - samplesPerByte) & (samplesPerByte - 1), pow);
-		if(sync)
+		runningSums[i][0] = 0;
+		runningSums[i][1] = 0;
+	}
+	constexpr uint16_t centerLevel = 2048;
+	for(int i = 0; i < runningSumSampleCount; i++)
+		runningSumSamples[i] = centerLevel;
+	runningSumAvgSum = runningSumSampleCount * centerLevel;
+	runningSumAvg = centerLevel;
+}
+
+inline uint16_t runningSumSampleAt(int bit, int pos)
+{
+	return runningSumSamples[(runningSumSamplePos + (bit * 32 + pos)) & runningSumSampleCountMask];
+}
+
+inline void runningSumPushSample(uint16_t sample)
+{
+	runningSumSamples[runningSumSamplePos] = sample;
+	runningSumSamplePos = (runningSumSamplePos + 1) & runningSumSampleCountMask;
+}
+
+void maintainRunningSums(uint16_t newSample)
+{
+	//maintain avg sum
+	runningSumAvgSum -= runningSumSampleAt(0, 0);
+
+	//subtract old samples from the sum
+	for(int i = 0; i < 8; i++)
+	{
+		//2 x carrier freq for 0
+		runningSums[i][0] += 
+			- runningSumSampleAt(i, 0) 		//upper portion of sine
+			- runningSumSampleAt(i, 16) 	//upper portion of sine 2nd wave
+			+ runningSumSampleAt(i, 8)		//lower portion of sine
+			+ runningSumSampleAt(i, 24);	//lower portion of sine 2nd wave
+		//1 x carrier freq for 1
+		runningSums[i][1] += 
+			- runningSumSampleAt(i, 0) 		//upper portion of sine
+			+ runningSumSampleAt(i, 16);	//lower portion of sine
+	}
+	//push in the new sample
+	runningSumPushSample(newSample);
+
+	//maintain avg sum
+	runningSumAvgSum += runningSumSampleAt(7, 31);
+	runningSumAvg = runningSumAvgSum >> 8;
+
+	//add new samples to the sum
+	for(int i = 0; i < 8; i++)
+	{
+		//2 x carrier freq for 0
+		runningSums[i][0] += 
+			+ runningSumSampleAt(i, 7) 		//upper portion of sine
+			+ runningSumSampleAt(i, 23) 	//upper portion of sine 2nd wave
+			- runningSumSampleAt(i, 15)		//lower portion of sine
+			- runningSumSampleAt(i, 31);	//lower portion of sine 2nd wave
+		//1 x carrier freq for 1
+		runningSums[i][1] += 
+			+ runningSumSampleAt(i, 15) 	//upper portion of sine
+			- runningSumSampleAt(i, 31);	//lower portion of sine
+	}	
+}
+
+void runningSumDecode(uint8_t &data, int &minPower)
+{
+	//calculating data and minimal power	
+	minPower = 0x7fffffff;
+	data = 0;
+	for(int i = 0; i < 8; i++)
+	{
+		if(runningSums[i][1] > runningSums[i][0])
 		{
-			samplesCurrentByte++;
-			if(samplesCurrentByte == samplesPerByte)
+			data |= 1 << i;
+			minPower = minPower < runningSums[i][1] ? minPower : runningSums[i][1];
+		}
+		else
+			minPower = minPower < runningSums[i][0] ? minPower : runningSums[i][0];
+	}
+}
+
+int runningSumSilenceLevel()
+{
+	int power = 0;
+	for(int i = 0; i < 8; i++)
+	{
+		power = max(power, max(
+					abs(runningSumSampleAt(i, 0) - runningSumAvg), 
+					abs(runningSumSampleAt(i, 4) - runningSumAvg)));
+	}
+	return power;
+}
+
+void decodeFromBuffer(uint8_t *buffer, int size, uint8_t *decodedBuffer, int decodedBufferSize, int &decodedBytes)
+{
+	decodedBytes = 0;
+	if(!decodedBufferSize) return;
+	constexpr int maxCorrection = 4;
+	constexpr int historySize = maxCorrection * 2 + 1;
+	int 	historyPower[historySize]; 
+	uint8_t historyData [historySize];
+	int syncBytesFound = 0;
+	runningSumInit();
+	int samplesSinceLastByte = 0;
+	for(int i = 0; i < size; i++)
+	{
+		maintainRunningSums(buffer[i]);
+		int powerLevel = runningSumSilenceLevel();
+		uint8_t decodedByte = 0;
+		int power = 0;
+		runningSumDecode(decodedByte, power);
+
+		//maintain history of power levels to adjust sync if needed
+		int maxPower = -1;
+		int maxPowerOffset = 0;
+		for(int i = 0; i < historySize; i++)
+		{
+			//shift history
+			if(i < historySize - 1)
 			{
-				buffer[bufferPos++] = decodedByte;
-				if(bufferPos == size) return;
-				samplesCurrentByte = 0;
+				historyPower[i] = historyPower[i + 1];
+				historyData [i] = historyData [i + 1];
+			}
+			else
+			{
+				historyPower[i] = power;
+				historyData [i] = decodedByte;
+			}
+			//find max power level
+			if(maxPower < historyPower[i])
+			{
+				maxPower = historyPower[i];
+				maxPowerOffset = i;
+			}
+		}
+
+		//find the sync byte first
+		if(syncBytesFound == 0)
+		{
+			if(power >= syncPowerTheshold && decodedByte == syncBytes[0])
+			{
+				samplesSinceLastByte = 0;
+				syncBytesFound = 1;
+				decodedBuffer[decodedBytes++] = decodedByte;
 			}
 		}
 		else
-			if(decodedByte == 0b01010011) // sync byte
+		{
+			//read all samples for a byte + correction
+			if(samplesSinceLastByte == 32 * 8 + maxCorrection)
 			{
-				if(pow > syncPow)
+				//byte out of sync
+				if(maxPower <= 0) //sync lost
 				{
-					syncPow = pow;
+					return;
 				}
-				else
+				//write back best byte
+				uint8_t dataByte = historyData[maxPowerOffset];
+				decodedBuffer[decodedBytes++] = dataByte;
+				if(syncBytesFound < syncByteCount)
 				{
-					sync = true;
-					samplesCurrentByte = 1;
+					//check further sync bytes
+					if(dataByte != syncBytes[syncBytesFound])
+					{
+						//snyc bytes do not match
+						//syncBytesFound = 0;
+						//decodedBytes -= syncBytesFound;
+						//continue
+					}
+					syncBytesFound++;
 				}
+				samplesSinceLastByte = historySize - 1 - maxPowerOffset;
+				if(decodedBytes == decodedBufferSize)
+					return;
 			}
+			else
+				samplesSinceLastByte++;
+		}
 	}
-	// amps = SUM(sample * sin(phase)) / N 
-	// ampc = SUM(sample * cos(phase)) / N 
-	// amp2 = amps * amps + ampc * ampc
 }

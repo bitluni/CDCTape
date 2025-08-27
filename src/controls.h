@@ -2,6 +2,8 @@
 #include <ch32v20x.h>
 #include "timer.h"
 
+//olympus recorder pins (1.5v , rec , stop , play , rew , 1.5v) connectors on the bottom
+
 constexpr int buttonRewPin = 6; 
 constexpr int buttonPlayPin = 5;
 constexpr int buttonStopPin = 4; 

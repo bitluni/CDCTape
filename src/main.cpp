@@ -11,6 +11,8 @@
 USBSerial Serial;
 
 uint8_t sampleBuffer[40000];
+uint8_t decodedData[1024];
+int decodedDataSize = 0;
 
 int dacFreq = 0;
 int ampLow = 0x2000;
@@ -68,10 +70,10 @@ int main(void)
 						delayMs(1000);
 						dacEnable(true);
 						delayMs(1000);
-						for(int i = 0; i < 256; i++)
-							sampleBuffer[i] = i;
-						for(int i = 0; i < 32; i++)
-							encodePacket(1500, sampleBuffer, 32, false);
+						for(int i = 0; i < 512; i++)
+							sampleBuffer[i] = i & 255;
+						for(int i = 0; i < 2; i++)
+							encodePacket(1500, sampleBuffer, 512, false);
 
 						/*uint64_t t0 = getTime();
 						while (getTime() - t0 < ms2ticks(5000))
@@ -99,7 +101,7 @@ int main(void)
 				case 9:
 					play();
 					delayMs(800);
-					delayMs(1000);
+					delayMs(1500);
 					//decodePacket(500, sampleBuffer, 256);
 					//Serial.write(sampleBuffer, 1600);
 					recordSamples(1500, sampleBuffer, 40000);
@@ -108,6 +110,22 @@ int main(void)
 					stop();
 					delayMs(500);
 					rew();
+					break;
+				case 10:
+					play();
+					delayMs(800);
+					delayMs(1500);
+					recordSamples(1500, sampleBuffer, 40000);
+					stop();
+					delayMs(800);
+					rew();
+					decodeFromBuffer(sampleBuffer, 40000, decodedData, 1024, decodedDataSize);
+					/*decodedDataSize = 10;
+					for(int i = 0; i < 10; i++)
+						decodedData[i] = i;*/
+					Serial.write((uint8_t*)&decodedDataSize, 4);
+					Serial.write(decodedData, decodedDataSize);
+					Serial.flush();
 					break;
 				default:
 					break;

@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>WebSerial Microsette</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      background: #111;
+      color: white;
+      text-align: center;
+      padding: 20px;
+    }
+    canvas {
+      border: 1px solid #555;
+      background: black;
+    }
+    button {
+      margin: 5px;
+      padding: 10px 20px;
+      font-size: 16px;
+    }
+	input
+	{
+		width: 1600px;
+	}
+	textarea{
+		width: 1600px;
+		min-height: 50px;
+		resize: vertical;
+		background-color: #111;
+		color: lightgray;
+	}
+  </style>
+</head>
+<body>
+
+  <h1>WebSerial Microsette</h1>
+  <button onclick="connectSerial()">Connect</button>
+  <div>
+    <button onclick="sendByte(1)">Stop</button>
+    <button onclick="sendByte(2)">Play</button>
+    <button onclick="sendByte(3)">Rew</button>
+    <button onclick="sendByte(4)">FF</button>
+    <button onclick="sendByte(5)">Record</button>
+    <button onclick="sendByte(6)">Rec Test</button>
+    <button onclick="sendByte(10); decodeData();">Decode</button>
+  </div>
+  <textarea></textarea>
+  <script>
+    let port;
+    let writer;
+    let reader;
+
+    async function connectSerial() {
+      try {
+        port = await navigator.serial.requestPort();
+        await port.open({ baudRate: 115200 });
+
+        writer = port.writable.getWriter();
+        reader = port.readable.getReader();
+
+      } catch (err) {
+        alert('Serial connection failed: ' + err);
+      }
+    }
+
+    function sendByte(byte) {
+      if (!writer) return;
+      writer.write(new Uint8Array([byte]));
+    }
+
+	function logClear()
+	{
+		console.clear();
+		document.querySelector("textarea").value = "";
+	}
+
+	function log(t)
+	{
+		console.log(t);
+		document.querySelector("textarea").value += t;
+	}
+
+	async function decodeData()
+	{
+		const data = await readData();
+		logData(data);
+	}
+
+	function logData(data)
+	{
+		log("decoded block:\n");
+		for(let i = 0; i < data.length; i++)
+		{
+			log("" + data[i] + ", ");
+		}
+		log("\n");
+	}
+
+	async function readData() 
+	{
+		try {
+			let header = new Uint8Array(4);
+			let headerPos = 0;
+			let expectedLength = null;
+			let raw = null;
+			let rawPos = 0;
+
+			while (true) {
+				const { value, done } = await reader.read();
+				if (done) throw new Error("Stream ended unexpectedly");
+
+				if (!value) continue;
+
+				let offset = 0;
+
+				// --- Fill header first ---
+				if (headerPos < 4) {
+					while (offset < value.length && headerPos < 4) {
+						header[headerPos++] = value[offset++];
+					}
+					// If header just completed, parse length
+					if (headerPos === 4) {
+						expectedLength = new DataView(header.buffer).getUint32(0, true); // little-endian
+						raw = new Uint8Array(expectedLength);
+						rawPos = 0;
+						console.log("Expecting", expectedLength, "bytes");
+					}
+				}
+
+				// --- Copy remaining data into payload ---
+				if (expectedLength !== null && offset < value.length) {
+					let toCopy = Math.min(value.length - offset, expectedLength - rawPos);
+					raw.set(value.subarray(offset, offset + toCopy), rawPos);
+					rawPos += toCopy;
+					offset += toCopy;
+
+					// --- Check if done ---
+					if (rawPos === expectedLength) {
+						return raw;
+					}
+				}
+			}
+		} catch (error) {
+			console.error("Read error:", error);
+			return null;
+		} /*finally {
+			reader.releaseLock();
+		}*/
+	}
+
+  </script>
+</body>
+</html>
