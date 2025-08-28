@@ -160,7 +160,7 @@
 		{
 			return false;
 		}
-		log(`Loaded ${data.length - 4} bytes `);
+		log(`Loaded ${data.length - 20} bytes `);
 		const decoder = new TextDecoder("utf-8");
 		const filename = decoder.decode(data.subarray(4, 16).filter((ch => ch != 0)));
 		const file = data.subarray(20)
