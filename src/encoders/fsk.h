@@ -241,7 +241,7 @@ bool decodePacket(int freq, uint8_t *decodedBuffer, int decodedBufferSize, int &
 	__disable_irq();
 	bool ret = false;
 	int samplesSinceSilence = 0;
-	int minSilence = 255;
+	//int minSilence = 255;
 	uint64_t t0 = getTime();
 	uint64_t t = t0;
 	while(t - t0 < timeoutTicks || syncBytesFound > 0)

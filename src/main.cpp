@@ -115,7 +115,6 @@ int main(void)
 					const int timeout = 10000; // 10 seconds
 					int chunkCount = 0;
 					int decodedDataSize = 0;
-					int retries = 0;
 					/*bool packetFound = decodePacket(encodeFreq, sampleBuffer, sampleBufferSize, decodedDataSize, timeout);
 					stop();
 					delayMs(800);/**/
