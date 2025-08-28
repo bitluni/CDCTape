@@ -69,9 +69,10 @@ inline void encodeByte(uint64_t &t0, uint64_t ticksPerWave, uint8_t b)
 	}
 }
 
-void encodePacket(int freq, uint8_t *data, size_t size)
+void encodePacket(int freq, uint8_t *data, size_t size, uint8_t *header = 0, size_t headerSize = 0, uint16_t crc = 0xffff)
 {
 	const uint64_t ticksPerWave = (ticksPerSecond / freq);
+	__disable_irq();
 	uint64_t t0 = getTime();
 	//sync
 	dacWrite(dacCenter);
@@ -81,8 +82,14 @@ void encodePacket(int freq, uint8_t *data, size_t size)
 	for(int i = 0; i < syncByteCount; i++)	
 		encodeByte(t0, ticksPerWave, syncBytes[i]); // sync bytes
 	//encode the actual bytes
+	for(size_t b = 0; b < headerSize; b++)
+		encodeByte(t0, ticksPerWave, header[b]);
+	//encode the actual bytes
 	for(size_t b = 0; b < size; b++)
 		encodeByte(t0, ticksPerWave, data[b]);
+	encodeByte(t0, ticksPerWave, crc & 255);
+	encodeByte(t0, ticksPerWave, (crc >> 8) & 255);	
+	__enable_irq();
 }
 
 inline uint32_t nextSample(uint64_t &t)

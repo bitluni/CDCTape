@@ -101,7 +101,8 @@
 	</div>
 
 	<div>
-		<button class="btn primary" onclick="sendByte(10); decodeData();">Read file from tape</button>
+		<button class="btn primary" onclick="sendByte(10);">Read file from tape</button>
+		<pre class="preview" id="chunks" aria-live="polite"></pre>
 		<pre class="preview" id="preview" aria-live="polite"></pre>
 	</div>
 	<pre class="preview" id="log" aria-live="polite"></pre>
@@ -117,6 +118,7 @@
 
         writer = port.writable.getWriter();
         reader = port.readable.getReader();
+		readLoop();
 
       } catch (err) {
         alert('Serial connection failed: ' + err);
@@ -140,17 +142,50 @@
 		logEl.textContent += t;
 	}
 
-	async function decodeData()
+	function trimTrailingZeros(bytes)
+	{
+		const last = bytes.lastIndexOf(0x00);
+		if (last === -1 || last !== bytes.length - 1) return bytes; 
+		return bytes.subarray(0, last); 
+	}
+
+	function interpretFileData(payload)
 	{
 		logClear();
-		const data = await readData();
-		if(data[0] == 1)
+		if(payload.length < 4) 
 		{
-			log(`Loaded ${data.length - 5} bytes`);
-			previewEl.textContent = renderHexPreview(data);
+			return false;
 		}
-		else
-			log(`File not found`);
+		const data = new Uint8Array(payload);
+		const size = new DataView(data.buffer).getUint32(0, true);
+		if(data.length - 4 < size)
+		{
+			return false;
+		}
+		log(`Loaded ${data.length - 4} bytes`);
+		previewEl.textContent = renderHexPreview(data);
+		const decoder = new TextDecoder("utf-8");
+		const filename = decoder.decode(trimTrailingZeros(data.subarray(4, 17)));
+		//makeDownloadLink(data.subarray(20), filename);
+		return true;
+	}
+
+	function interpretChunkData(payload)
+	{
+		logClear();
+		if(payload.length < 1) 
+		{
+			return false;
+		}
+		const size = payload[0];
+		if(payload.length - 1 < size)
+		{
+			return false;
+		}
+		log(`States of ${size} chunks`);
+		payload.shift();
+		chunksEl.textContent = payload.join("");
+		return true;
 	}
 
 	function logData(data)
@@ -163,62 +198,58 @@
 		log("\n");
 	}
 
-	async function readData() 
+	async function readLoop()
 	{
+		let command = 0;
+		let payload = [];
 		try {
-			let header = new Uint8Array(4);
-			let headerPos = 0;
-			let expectedLength = null;
-			let raw = null;
-			let rawPos = 0;
-
 			while (true) {
 				const { value, done } = await reader.read();
-				if (done) throw new Error("Stream ended unexpectedly");
-
-				if (!value) continue;
-
-				let offset = 0;
-
-				// --- Fill header first ---
-				if (headerPos < 4) {
-					while (offset < value.length && headerPos < 4) {
-						header[headerPos++] = value[offset++];
-					}
-					// If header just completed, parse length
-					if (headerPos === 4) {
-						expectedLength = new DataView(header.buffer).getUint32(0, true); // little-endian
-						raw = new Uint8Array(expectedLength);
-						rawPos = 0;
-						console.log("Expecting", expectedLength, "bytes");
-					}
-				}
-
-				// --- Copy remaining data into payload ---
-				if (expectedLength !== null && offset < value.length) {
-					let toCopy = Math.min(value.length - offset, expectedLength - rawPos);
-					raw.set(value.subarray(offset, offset + toCopy), rawPos);
-					rawPos += toCopy;
-					offset += toCopy;
-
-					// --- Check if done ---
-					if (rawPos === expectedLength) {
-						return raw;
+				if (done) break;
+				if (value) {
+					for (let i = 0; i < value.length; i++) 
+					{
+						if(!command)
+						{
+							command = value[i];
+						}
+						else
+						{
+							let done = false;
+							payload.push(value[i]);
+							switch(command)
+							{
+								case 1: //filedata
+									done = interpretFileData(payload);
+									break;
+								case 2: //chunkdata
+									done = interpretChunkData(payload);
+									break;
+								default:
+									done = true;
+									break;
+							}
+							if(done)
+							{
+								command = 0;
+								payload = [];
+							}
+						}
 					}
 				}
 			}
 		} catch (error) {
-			console.error("Read error:", error);
-			return null;
-		} /*finally {
+			console.error('Read error:', error);
+		} finally {
 			reader.releaseLock();
-		}*/
+		}
 	}
 
 	//file dropper
 	const dropzone = document.getElementById('dropzone');
 	const fileInput = document.getElementById('fileInput');
 	const previewEl = document.getElementById('preview');
+	const chunksEl = document.getElementById('chunks');
 	const logEl = document.getElementById('log');
 
 	// Expose the latest bytes globally for easy reuse elsewhere in your app

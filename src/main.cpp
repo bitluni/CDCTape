@@ -6,12 +6,16 @@
 #include "sine.h"
 #include "adc.h"
 #include "encoders/fsk.h"
+#include "fs.h"
 
 #include "usb/usb_serial.h"
 USBSerial Serial;
 
-constexpr uint32_t sampleBufferSize = 50000;
+constexpr uint32_t sampleBufferSize = 40000;
 uint8_t sampleBuffer[sampleBufferSize];
+constexpr uint16_t maxChunkCount = 100;
+uint8_t chunkStates[maxChunkCount];
+
 
 int dacFreq = 0;
 int ampLow = 0x2000;
@@ -108,13 +112,32 @@ int main(void)
 					delayMs(800);
 					delayMs(1500);
 					const int timeout = 10000; // 10 seconds
+					int chunkCount = 0;
 					int decodedDataSize = 0;
-					bool packetFound = decodePacket(encodeFreq, sampleBuffer, sampleBufferSize, decodedDataSize, timeout);
+					/*bool packetFound = decodePacket(encodeFreq, sampleBuffer, sampleBufferSize, decodedDataSize, timeout);
+					stop();
+					delayMs(800);/**/
+					for(int i = 0; i < maxChunkCount; i++)
+						chunkStates[i] = 0;
+					bool chunkFound = loadData(encodeFreq, sampleBuffer, sampleBufferSize, 
+												chunkStates, maxChunkCount, chunkCount, decodedDataSize, timeout);
 					stop();
 					delayMs(800);
-					decodedDataSize++; //packetFound indicator
-					Serial.write((uint8_t*)&decodedDataSize, 4);
-					Serial.write((uint8_t)(packetFound ? 1 : 0));
+					if(!chunkFound)
+					{
+						Serial.write((uint8_t)0);
+						Serial.flush();
+						rew();
+						break;
+					}
+					Serial.write((uint8_t)2);	//chunkStates
+					Serial.write((uint8_t)chunkCount);
+					for(int i = 0; i < chunkCount; i++)
+						Serial.write(chunkStates[i]);/**/
+					Serial.write((uint8_t)1);	//fileData
+					int totalSize = decodedDataSize;// + 1;
+					Serial.write((uint8_t*)&totalSize, 4);
+					//Serial.write((uint8_t)(packetFound ? 1 : 0));
 					Serial.write(sampleBuffer, decodedDataSize);
 					Serial.flush();
 					rew();
@@ -131,7 +154,10 @@ int main(void)
 					delayMs(1000);
 					dacEnable(true);
 					delayMs(1000);
-					encodePacket(encodeFreq, sampleBuffer, fileLength);
+					
+					//encodePacket(encodeFreq, sampleBuffer, fileLength);
+					storeData(encodeFreq, sampleBuffer, fileLength);
+
 					dacEnable(false);
 					stop();
 					delayMs(1000);
