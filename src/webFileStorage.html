@@ -76,6 +76,11 @@
       text-align: center;
       padding: 20px;
     }
+
+	a
+	{
+		color: lightblue;
+	}
   </style>
 </head>
 <body>
@@ -114,7 +119,7 @@
     async function connectSerial() {
       try {
         port = await navigator.serial.requestPort();
-        await port.open({ baudRate: 115200 });
+        await port.open({ baudRate: 1000000, bufferSize: 1000000});
 
         writer = port.writable.getWriter();
         reader = port.readable.getReader();
@@ -142,13 +147,6 @@
 		logEl.textContent += t;
 	}
 
-	function trimTrailingZeros(bytes)
-	{
-		const last = bytes.lastIndexOf(0x00);
-		if (last === -1 || last !== bytes.length - 1) return bytes; 
-		return bytes.subarray(0, last); 
-	}
-
 	function interpretFileData(payload)
 	{
 		logClear();
@@ -162,11 +160,13 @@
 		{
 			return false;
 		}
-		log(`Loaded ${data.length - 4} bytes`);
-		previewEl.textContent = renderHexPreview(data);
+		log(`Loaded ${data.length - 4} bytes `);
 		const decoder = new TextDecoder("utf-8");
-		const filename = decoder.decode(trimTrailingZeros(data.subarray(4, 17)));
-		//makeDownloadLink(data.subarray(20), filename);
+		const filename = decoder.decode(data.subarray(4, 16).filter((ch => ch != 0)));
+		const file = data.subarray(20)
+		chunksEl.textContent += "\n"
+		chunksEl.appendChild(makeDownloadLink(file, filename));
+		previewEl.textContent = renderHexPreview(file);
 		return true;
 	}
 
@@ -182,9 +182,9 @@
 		{
 			return false;
 		}
-		log(`States of ${size} chunks`);
+		//log(`States of ${size} chunks`);
 		payload.shift();
-		chunksEl.textContent = payload.join("");
+		chunksEl.textContent = payload.join("").replaceAll("0", "░").replaceAll("1", "▓").replaceAll("2", "▒");
 		return true;
 	}
 
@@ -224,6 +224,9 @@
 									break;
 								case 2: //chunkdata
 									done = interpretChunkData(payload);
+									break;
+								case 0:
+									log("No data found.");
 									break;
 								default:
 									done = true;
@@ -342,15 +345,16 @@
 		const a = document.createElement("a");
 		a.href = url;
 		a.download = filename;
-		a.textContent = `Download ${filename}`;
+		a.textContent = `${filename}`;
 
 		// Optional: revoke URL after click
 		a.addEventListener("click", () => {
 			setTimeout(() => URL.revokeObjectURL(url), 1000);
 		});
-		document.body.appendChild(a);
-		a.click();
-		document.body.removeChild(a);
+		return a;
+		//dcument.body.appendChild(a);
+		//a.click();
+		//document.body.removeChild(a);
 	}
 
 </script>

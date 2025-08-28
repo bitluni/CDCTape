@@ -4,10 +4,12 @@
 #include "crc.h"
 #include "encoders/fsk.h"
 
+constexpr int rewindMillisPerChunk = 1500;
 constexpr uint32_t bytesPerChunk = 512;
 constexpr int headerByteCount = 6;
 constexpr int crcByteCount = 2;
 constexpr int chunkBufferSize = bytesPerChunk + syncByteCount + headerByteCount + crcByteCount;
+constexpr int chunkRepeats = 2;
 uint8_t chunkBuffer[chunkBufferSize];
 
 void storeData(int freq, uint8_t *data, uint32_t size)
@@ -31,95 +33,64 @@ void storeData(int freq, uint8_t *data, uint32_t size)
 		header[1] = numberOfChunks;
 		header[2] = chunkSize;
 		uint16_t crc = crc16(&(data[totalBytesStored]), chunkSize);
-		encodePacket(freq, &(data[totalBytesStored]), chunkSize, (uint8_t*)header, headerByteCount, crc);
+	
+		for(int j = 0; j < chunkRepeats; j++)
+		{
+			//update chunk states to host
+			Serial.write((uint8_t)2);	//chunkStates
+			Serial.write((uint8_t)numberOfChunks);
+			for(int k = 0; k < numberOfChunks; k++)
+				Serial.write(k <= i ? 1 : 0);
+			Serial.flush();	
+			
+			encodePacket(freq, &(data[totalBytesStored]), chunkSize, (uint8_t*)header, headerByteCount, crc);
+			delayMs(200);
+		}
+
 		totalBytesStored += chunkSize;
-		delayMs(200);
 	}
 }
 
-bool loadData(int freq, uint8_t *decodedBuffer, int decodedBufferSize, uint8_t *chunkStates, uint16_t maxChunks, int &chunkCount, int &lastWrittenByteNumber, int timeout = 10000)
+uint8_t *loadChunk(int freq, int &chunkIndex, int &chunkCount, int &chunkSize, int &state, int timeout = 10000)
 {
-	lastWrittenByteNumber = 0;
-	bool foundAtLeastOneChunk = false;
-	while(1)
+	state = 0;	//no chunks found
+	int decodedBytes = 0;
+	bool packetFound = decodePacket(freq, chunkBuffer, chunkBufferSize, decodedBytes, timeout);
+	if(!packetFound)
 	{
-		int chunkNumber = 0xffff;
-		int numberOfChunks = 0;
-		int chunkSize = 0;
-		bool chunkOk = true;
-		for(int i = 0; i < 1; i++)
-		{
-			int decodedBytes = 0;
-			bool packetFound = decodePacket(freq, chunkBuffer, chunkBufferSize, decodedBytes, timeout);
-			if(!packetFound)
-			{
-				//no chunks found
-				return foundAtLeastOneChunk;
-			}
-			if(decodedBytes < syncByteCount + headerByteCount + crcByteCount)
-			{
-				chunkOk = false;
-				//not enough data
-				break;
-			}
-			uint16_t *header = (uint16_t*)&(chunkBuffer[syncByteCount]);
-			chunkNumber = header[0];
-			numberOfChunks = header[1];
-			chunkSize = header[2];
-			if(decodedBytes < syncByteCount + headerByteCount + crcByteCount + chunkSize)
-			{
-				chunkOk = false;
-				//not enough data
-				break;
-			}
-			if(chunkNumber >= numberOfChunks)
-			{
-				chunkOk = false;
-				//header broken?
-				break;
-			}
-			if(chunkNumber >= maxChunks)
-			{
-				chunkOk = false;
-				//clip chunks that dont fit
-				break;
-			}
-			int dataOffset = syncByteCount + headerByteCount;
-			int crcOffset = dataOffset + chunkSize;
-			uint16_t crc = crc16(&(chunkBuffer[dataOffset]), chunkSize);
-			if(crc != (chunkBuffer[crcOffset] | ((int)chunkBuffer[crcOffset + 1]) << 8))
-			{
-				chunkOk = false;
-				//crc failed
-				break;
-			}
-		}
-		if(chunkOk)
-		{
-			if(chunkStates[chunkNumber] != 1)	// not read yet
-			{
-				//copy data
-				int chunkOffset = bytesPerChunk * chunkNumber;
-				for(int i = 0; i < chunkSize; i++)
-				{
-					decodedBuffer[chunkOffset + i] = chunkBuffer[syncByteCount + headerByteCount + i];
-				}
-				if(lastWrittenByteNumber < chunkOffset + chunkSize)
-					lastWrittenByteNumber = chunkOffset + chunkSize;
-				chunkStates[chunkNumber] = 1; //ok
-				chunkCount = numberOfChunks;
-			}
-			foundAtLeastOneChunk = true;
-		}
-		else
-		{
-			if(chunkStates[chunkNumber] == 0)
-				chunkStates[chunkNumber] = 2;	//found but faulty
-		}
-		if(chunkNumber == numberOfChunks - 1)
-		{
-			return foundAtLeastOneChunk;
-		}
+		//no chunks found
+		return 0;
 	}
-	return foundAtLeastOneChunk;
+	state = 3;	//chunk number not valid yet
+	if(decodedBytes < syncByteCount + headerByteCount + crcByteCount)
+	{
+		//not enough data
+		return 0;
+	}
+	uint16_t *header = (uint16_t*)&(chunkBuffer[syncByteCount]);
+	chunkIndex = header[0];
+	int newChunkCount = header[1];
+	chunkSize = header[2];
+	if(chunkIndex >= newChunkCount)
+	{
+		//header broken?
+		return 0;
+	}
+	state = 2;	//chunk number probably valid but not data wrong
+	if(decodedBytes < syncByteCount + headerByteCount + crcByteCount + chunkSize)
+	{
+		//not enough data
+		return 0;
+	}
+	int dataOffset = syncByteCount + headerByteCount;
+	int crcOffset = dataOffset + chunkSize;
+	uint16_t crc = crc16(&(chunkBuffer[dataOffset]), chunkSize);
+	if(crc != (chunkBuffer[crcOffset] | ((int)chunkBuffer[crcOffset + 1]) << 8))
+	{
+		//crc failed
+		return 0;
+	}
+	state = 1;	//chunk ok
+	chunkCount = newChunkCount;
+	return &chunkBuffer[syncByteCount + headerByteCount]; //skip header;
 }
