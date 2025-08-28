@@ -198,8 +198,6 @@ int main(void)
 							play();
 							delayMs(1000);
 						}
-						else 
-							retries = 0;
 					}
 					stop();
 					if(chunkCount)
